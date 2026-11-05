@@ -134,7 +134,7 @@ def functional_matrix(server: Server, env: dict, pin: str, prefix: str) -> None:
     check("index built_from_revision", body["metadata_index"]["built_from_revision"][:12])
     check("default mount absent", requests.get(
         f"http://127.0.0.1:{PORT}/api/v1/learn/voa/health", timeout=20).status_code)
-    check("resource sample", body["resources"])
+    check("resource sample at boot", body["resources"])
 
     catalog = run(server, "/catalog")
     cold = catalog.json()
@@ -163,14 +163,19 @@ def functional_matrix(server: Server, env: dict, pin: str, prefix: str) -> None:
     second = run(server, "/items", params={"limit": 5, "offset": 5})
     ids = {row["id"] for row in page.json()["items"]} | {row["id"] for row in second.json()["items"]}
     check("pages disjoint", len(ids) == 10)
-    filtered = run(server, "/items", params={"program": "As It Is", "cefr": "B1",
-                                             "media": "archived", "sort": "newest", "limit": 3})
+    filtered_params = {"program": "As It Is", "cefr": "B1", "media": "archived",
+                       "sort": "newest"}
+    filtered = run(server, "/items", params=dict(filtered_params, limit=3))
     check("filtered items", (filtered.json()["total"],
                              [row["id"] for row in filtered.json()["items"]]))
-    tail_page = run(server, "/items", params={"limit": 5, "offset": filtered.json()["total"] - 3})
-    tail = tail_page.json()
-    check("last page is the remainder", (tail["offset"], tail["returned"], tail["total"],
+    total_all = run(server, "/items", params={"limit": 1}).json()["total"]
+    tail = run(server, "/items", params={"limit": 5, "offset": total_all - 2}).json()
+    check("tail page is the remainder", (tail["offset"], tail["returned"], tail["total"],
                                          tail["offset"] + tail["returned"] == tail["total"]))
+    filtered_tail = run(server, "/items",
+                        params=dict(filtered_params, limit=5,
+                                    offset=filtered.json()["total"] - 1)).json()
+    check("filter survives paging", (filtered_tail["total"], filtered_tail["returned"]))
     check("bad filter rejected", run(server, "/items?cefr=C2", expect=(400,)).status_code)
     check("oversized page rejected", run(server, "/items?limit=500", expect=(422,)).status_code)
 
@@ -249,6 +254,10 @@ def functional_matrix(server: Server, env: dict, pin: str, prefix: str) -> None:
                            timeout=60)
     check("JSON 304 on ETag", (json304.status_code, len(json304.content)))
 
+    after = run(server, "/health").json()["resources"]
+    check("peak RSS MB after reads and media", after["peak_rss_mb"])
+    check("rows in memory after reads", after["rows_in_memory"])
+    check("cache free MB", after["cache_free_mb"])
     REPORT["phases"]["A"] = {**phase, "timings": timings}
     return timings
 
@@ -260,7 +269,13 @@ def cache_damage(server: Server, env: dict, pin: str, prefix: str) -> None:
     if not cached:
         raise AssertionError("the published index was never cached - where did the rows come from?")
     before = cached.stat().st_size
-    cached.write_bytes(b"garbage from a half-written download")
+    # the hub keeps a snapshot entry as a read-only link into blobs/, so damaging the cache
+    # means writing the bytes it resolves to - which is what a torn download looks like on disk
+    target = cached.resolve() if cached.is_symlink() else cached
+    mode = target.stat().st_mode
+    target.chmod(0o600)
+    target.write_bytes(b"garbage from a half-written download")
+    check("cache damaged at", (target.name, target.stat().st_size))
     server.stop()
     boot = server.start()
     catalog = run(server, "/catalog")
