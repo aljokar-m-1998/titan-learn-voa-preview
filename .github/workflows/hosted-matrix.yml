@@ -49,15 +49,44 @@ jobs:
           python - <<'PY'
           import json, pathlib, sys
           report = json.loads(pathlib.Path("hosted-matrix.json").read_text(encoding="utf-8"))
+          if report.get("failure"):
+              sys.exit(f"the matrix aborted: {report['failure']}")
           checks = report["checks"]
-          needed = ("cold /catalog seconds", "after cache damage: rows", "GET audio byte-exact vs dataset sha",
-                    "audio 206 slice", "401 /items", "health pinned_revision")
+          needed = ("health pinned_revision", "mounted prefix", "index declared+ready",
+                    "index records_sha256 link", "cold /catalog index_source",
+                    "catalog facet sums agree", "pages disjoint", "tail page is the remainder",
+                    "GET audio byte-exact vs dataset sha", "audio 206 slice",
+                    "audio 416 malformed range", "video 206 head", "JSON 304 on ETag",
+                    "after cache damage: rows", "after cache damage: re-downloaded size",
+                    "fresh cache (new container): cold_start_seconds",
+                    "default mount absent", "401 /items", "401 with a forged bearer")
           missing = [name for name in needed if name not in checks]
           print(f"{len(checks)} checks recorded")
           if missing:
               sys.exit(f"missing checks: {missing}")
+          problems = []
           if checks["GET audio byte-exact vs dataset sha"][2] is not True:
-              sys.exit("served audio bytes did not match the dataset checksum")
+              problems.append("served audio bytes did not match the dataset checksum")
+          if checks["audio 206 slice"][0] != 206 or checks["audio 206 slice"][3] is not True:
+              problems.append("the 206 slice was not the requested bytes")
+          if checks["video 206 head"][2] is not True:
+              problems.append("the video content-range did not match the object size")
+          if checks["after cache damage: re-downloaded size"] is not True:
+              problems.append("the damaged cache was not restored to the declared size")
+          if checks["after cache damage: rows"] != 71291:
+              problems.append("the reader did not recover 71,291 rows after cache damage")
+          if checks["cold /catalog index_source"] != "dataset":
+              problems.append("rows did not come from the published index")
+          if checks["catalog facet sums agree"] is not True:
+              problems.append("facets do not add up to the record count")
+          if checks["default mount absent"] != 404:
+              problems.append("the default mount answered on a preview-only deployment")
+          auth = [value for key, value in checks.items() if key.startswith("401 ")]
+          if len(auth) < 10 or set(auth) != {401}:
+              problems.append(f"expected every content route to answer 401, got {auth}")
+          if problems:
+              sys.exit("; ".join(problems))
+          print("hosted matrix: every gate passed")
           PY
 
       - uses: actions/upload-artifact@v4
