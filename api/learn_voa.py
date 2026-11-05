@@ -57,17 +57,22 @@ DEFAULT_PREFIX = "/api/v1/learn/voa"
 PREVIEW_UNAUTH_ENV = "VOA_LEARN_PREVIEW_UNAUTH"
 
 
+PREFIX_RE = re.compile(r"^/[0-9A-Za-z][0-9A-Za-z._~/-]{1,79}$")
+
+
 def _configured_prefix() -> str:
     """Where this router is mounted. One source of truth: the mount and the URLs it emits.
 
-    A missing leading slash is a typo in an environment variable, not a reason for the container
-    to fail at import - it is repaired. Anything still not absolute falls back to the default
-    mount, so a bad value can never expose the library on an unintended path.
+    A missing leading slash is a typo and is repaired. Anything that is not a clean URL path -
+    a shell that rewrote it into a Windows path, an embedded colon, a `..` - falls back to the
+    default mount instead of becoming a route. That matters beyond tidiness: the tokenless
+    preview switch arms only off the default prefix, so a mangled value must not be able to
+    count as "some other path" and open an unauthenticated library nobody intended to expose.
     """
     configured = os.environ.get("VOA_LEARN_PREFIX", "").strip().rstrip("/")
     if configured and not configured.startswith("/"):
         configured = "/" + configured
-    return configured or DEFAULT_PREFIX
+    return configured if PREFIX_RE.fullmatch(configured) else DEFAULT_PREFIX
 
 
 PREFIX = _configured_prefix()

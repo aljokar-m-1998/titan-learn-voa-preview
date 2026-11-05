@@ -118,7 +118,12 @@ def functional_matrix(server: Server, env: dict, pin: str, prefix: str) -> None:
     timings = {}
     health = run(server, "/health")
     body = health.json()
+    mounted = body["resources"]["prefix"]
+    if mounted != server.prefix:
+        # a shell or an input field can rewrite a path; never test a mount that is not the one asked
+        raise AssertionError(f"asked to mount {server.prefix}, the app mounted {mounted}")
     check("health status", (health.status_code, body["status"], body["auth"]))
+    check("mounted prefix", mounted)
     check("health pinned_revision", body["pinned_revision"])
     check("health records_count (manifest)", body["records_count"])
     check("health media_objects_count", body["media_objects_count"])
