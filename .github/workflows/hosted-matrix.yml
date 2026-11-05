@@ -58,7 +58,8 @@ jobs:
                     "GET audio byte-exact vs dataset sha", "audio 206 slice",
                     "audio 416 malformed range", "video 206 head", "JSON 304 on ETag",
                     "after cache damage: rows", "after cache damage: re-downloaded size",
-                    "fresh cache (new container): cold_start_seconds",
+                    "fresh cache (new container): cold_start_seconds reported",
+                    "fresh cache (new container): index source",
                     "default mount absent", "401 /items", "401 with a forged bearer")
           missing = [name for name in needed if name not in checks]
           print(f"{len(checks)} checks recorded")
@@ -84,9 +85,18 @@ jobs:
           auth = [value for key, value in checks.items() if key.startswith("401 ")]
           if len(auth) < 10 or set(auth) != {401}:
               problems.append(f"expected every content route to answer 401, got {auth}")
+          forty_one = [k for k in checks if k.startswith("401 ")]
+          if len(forty_one) < 10:
+              problems.append(f"only {len(forty_one)} routes were verified as 401")
+          if len(checks) < 70:
+              problems.append(f"only {len(checks)} checks recorded, expected the full matrix")
+          if checks["default mount absent"] != 404:
+              problems.append("the default mount answered on a preview-only deployment")
+          if checks["tail page is the remainder"][3] is not True:
+              problems.append("the last page was not the remainder of the list")
           if problems:
               sys.exit("; ".join(problems))
-          print("hosted matrix: every gate passed")
+          print(f"hosted matrix passed: {len(checks)} checks, {len(forty_one)} of them 401 proofs")
           PY
 
       - uses: actions/upload-artifact@v4
