@@ -23,6 +23,7 @@ import socket
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
 
 import psutil
@@ -325,19 +326,28 @@ def main() -> int:
     print(f"pin {args.pin}\nprefix {args.prefix}\nHF_HOME {env['HF_HOME']} (empty: a cold container)\n",
           flush=True)
 
+    failure = None
     server = Server(env, args.prefix)
-    boot = server.start()
-    check("cold process startup seconds", boot["process_startup_seconds"])
-    timings = functional_matrix(server, env, args.pin, args.prefix)
-    cache_damage(server, env, args.pin, args.prefix)
-    server.stop()
-    cold_boot_again(env, args.pin, args.prefix, "fresh cache (new container)")
-    auth_matrix(env, args.pin, args.prefix)
-
-    out = ROOT / "hosted-matrix.json"
-    out.write_text(json.dumps(REPORT, ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"\nwrote {out} ({out.stat().st_size} bytes, {len(REPORT['checks'])} checks)", flush=True)
-    return 0
+    try:
+        boot = server.start()
+        check("cold process startup seconds", boot["process_startup_seconds"])
+        functional_matrix(server, env, args.pin, args.prefix)
+        cache_damage(server, env, args.pin, args.prefix)
+        server.stop()
+        cold_boot_again(env, args.pin, args.prefix, "fresh cache (new container)")
+        auth_matrix(env, args.pin, args.prefix)
+    except BaseException as error:            # a failed phase still has to produce its evidence
+        failure = f"{type(error).__name__}: {error}"
+        REPORT["failure"] = failure
+        traceback.print_exc()
+        print(f"FAILED: {failure}", flush=True)
+    finally:
+        server.stop()
+        out = ROOT / "hosted-matrix.json"
+        out.write_text(json.dumps(REPORT, ensure_ascii=False, indent=1), encoding="utf-8")
+        print(f"wrote {out} ({out.stat().st_size} bytes, {len(REPORT['checks'])} checks)",
+              flush=True)
+    return 1 if failure else 0
 
 
 if __name__ == "__main__":
