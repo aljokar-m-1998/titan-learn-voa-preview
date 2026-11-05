@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+
+# Firebase auth is kept as a dependency so require_user behaves exactly as it does on the
+# gateway: with no service-account secret in this container it fails closed and answers 401.
+firebase-admin
+
+# The pinned Titan-Learn revision is read straight from the hub, as Parquet.
+huggingface_hub
+pyarrow>=15

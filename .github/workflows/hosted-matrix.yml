@@ -1,0 +1,69 @@
+name: hosted adapter matrix
+
+# Runs the VOA adapter as a real server on hosted Linux against the pinned dataset commit.
+# No secrets: the revision is public, so this also proves the reader works anonymously.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pin:
+        description: "Titan-Learn commit to pin (40 hex, never a branch)"
+        required: true
+        default: "0cf163c23c2ee9777c93c9e9c70afceeb837c6a3"
+      prefix:
+        description: "isolated mount for the trial"
+        required: true
+        default: "/api/v1/preview/learn/voa"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: voa-hosted-matrix
+  cancel-in-progress: false
+
+jobs:
+  matrix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: install exactly what the container installs
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install requests psutil
+
+      - name: run the hosted matrix
+        run: |
+          python hosted_matrix.py --pin "${{ inputs.pin }}" --prefix "${{ inputs.prefix }}" \
+            | tee hosted-matrix.log
+
+      - name: fail loudly if the report is missing checks
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          report = json.loads(pathlib.Path("hosted-matrix.json").read_text(encoding="utf-8"))
+          checks = report["checks"]
+          needed = ("cold /catalog seconds", "after cache damage: rows", "GET audio byte-exact vs dataset sha",
+                    "audio 206 slice", "401 /items", "health pinned_revision")
+          missing = [name for name in needed if name not in checks]
+          print(f"{len(checks)} checks recorded")
+          if missing:
+              sys.exit(f"missing checks: {missing}")
+          if checks["GET audio byte-exact vs dataset sha"][2] is not True:
+              sys.exit("served audio bytes did not match the dataset checksum")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: voa-hosted-matrix
+          path: |
+            hosted-matrix.json
+            hosted-matrix.log
